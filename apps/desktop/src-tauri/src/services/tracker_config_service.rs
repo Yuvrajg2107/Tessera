@@ -108,6 +108,34 @@ pub async fn delete_config(pool: &SqlitePool, id: &str) -> AppResult<()> {
     tracker_config_repo::delete(pool, id).await
 }
 
+/// Get a tracker config by its tracker name (e.g., "jira").
+pub async fn get_config_by_tracker(
+    pool: &SqlitePool,
+    tracker: &str,
+) -> AppResult<Option<TrackerConfigView>> {
+    let row_opt = tracker_config_repo::fetch_for_user_tracker(pool, DEFAULT_USER_ID, tracker).await?;
+    Ok(row_opt.map(|r| TrackerConfigView {
+        id: r.id,
+        tracker: r.tracker,
+        site_url: r.site_url,
+        email: r.email,
+        has_api_token: r.api_token_encrypted.is_some() && r.api_token_nonce.is_some(),
+        project_key: r.project_key,
+        issue_type: r.issue_type,
+        severity_map_json: r.severity_map_json,
+        is_active: r.is_active,
+    }))
+}
+
+/// Delete a tracker config by its tracker name (e.g., "jira").
+pub async fn delete_config_by_tracker(pool: &SqlitePool, tracker: &str) -> AppResult<()> {
+    let existing = tracker_config_repo::fetch_for_user_tracker(pool, DEFAULT_USER_ID, tracker).await?;
+    if let Some(row) = existing {
+        tracker_config_repo::delete(pool, &row.id).await?;
+    }
+    Ok(())
+}
+
 /// Build a live `IssueTracker` client by decrypting the stored API token.
 pub fn build_tracker_client(
     crypto: &CryptoKey,

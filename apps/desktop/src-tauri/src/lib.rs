@@ -142,11 +142,13 @@ pub fn run() {
             // Tracker config and push commands
             commands::trackers::save_tracker_config,
             commands::trackers::list_tracker_configs,
+            commands::trackers::get_tracker_config,
             commands::trackers::delete_tracker_config,
             commands::trackers::test_tracker_connection,
-            commands::trackers::push_to_tracker,
-            commands::trackers::bulk_push_to_tracker,
-            commands::trackers::refresh_tracker_link_status,
+            commands::trackers::preview_jira_push,
+            commands::trackers::push_artifact_to_jira,
+            commands::trackers::bulk_push_artifacts_to_jira,
+            commands::trackers::refresh_external_link_status,
             commands::trackers::list_external_links,
 
         ])

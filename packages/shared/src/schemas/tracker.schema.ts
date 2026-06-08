@@ -43,7 +43,7 @@ export type PushPreview = z.infer<typeof PushPreviewSchema>;
 
 export const CreatedIssueSchema = z.object({
   key: z.string(),
-  id: z.string(),
+  id: z.string().optional(),
   url: z.string(),
 });
 
@@ -52,7 +52,7 @@ export type CreatedIssue = z.infer<typeof CreatedIssueSchema>;
 export const TrackerUserSchema = z.object({
   displayName: z.string(),
   email: z.string().nullable().optional(),
-  accountId: z.string(),
+  accountId: z.string().optional(),
 });
 
 export type TrackerUser = z.infer<typeof TrackerUserSchema>;
@@ -60,8 +60,7 @@ export type TrackerUser = z.infer<typeof TrackerUserSchema>;
 export const BulkPushResultItemSchema = z.object({
   artifactId: z.string().uuid(),
   success: z.boolean(),
-  key: z.string().nullable().optional(),
-  url: z.string().nullable().optional(),
+  keys: z.array(z.string()),
   error: z.string().nullable().optional(),
 });
 

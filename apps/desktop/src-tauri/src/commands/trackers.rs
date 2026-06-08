@@ -1,14 +1,15 @@
 //! Tracker configuration and push IPC commands.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 
 use crate::repositories::external_link_repo::{self, ExternalLinkRow};
 use crate::repositories::tracker_config_repo;
 use crate::services::tracker_config_service::{self, TrackerConfigView};
-use crate::services::jira_push_service::{self, BulkPushResultItem, PushResult};
+use crate::services::jira_push_service::{self, BulkPushResultItem};
 use crate::utils::crypto::CryptoKey;
+use crate::providers::trackers::TrackerUser;
 
 /// IPC payload for `save_tracker_config`.
 #[derive(Debug, Deserialize)]
@@ -34,13 +35,21 @@ pub struct TestTrackerConnectionArgs {
     pub api_token: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedIssueView {
+    pub key: String,
+    pub url: String,
+}
+
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub async fn save_tracker_config(
     pool: State<'_, SqlitePool>,
     crypto: State<'_, CryptoKey>,
     args: SaveTrackerArgs,
-) -> Result<String, String> {
+) -> Result<TrackerConfigView, String> {
+    let tracker = args.tracker.clone();
     tracker_config_service::save_config(
         &pool,
         &crypto,
@@ -54,7 +63,13 @@ pub async fn save_tracker_config(
         args.is_active,
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    let view = tracker_config_service::get_config_by_tracker(&pool, &tracker)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    view.ok_or_else(|| "Saved configuration could not be loaded".to_string())
 }
 
 #[tauri::command]
@@ -69,12 +84,22 @@ pub async fn list_tracker_configs(
 }
 
 #[tauri::command]
+pub async fn get_tracker_config(
+    pool: State<'_, SqlitePool>,
+    tracker: String,
+) -> Result<Option<TrackerConfigView>, String> {
+    tracker_config_service::get_config_by_tracker(&pool, &tracker)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub async fn delete_tracker_config(
     pool: State<'_, SqlitePool>,
-    id: String,
+    tracker: String,
 ) -> Result<(), String> {
-    tracker_config_service::delete_config(&pool, &id)
+    tracker_config_service::delete_config_by_tracker(&pool, &tracker)
         .await
         .map_err(|e| e.to_string())
 }
@@ -85,7 +110,7 @@ pub async fn test_tracker_connection(
     pool: State<'_, SqlitePool>,
     crypto: State<'_, CryptoKey>,
     args: TestTrackerConnectionArgs,
-) -> Result<String, String> {
+) -> Result<TrackerUser, String> {
     if args.tracker.trim() != "jira" {
         return Err("Unsupported tracker type".to_string());
     }
@@ -120,24 +145,39 @@ pub async fn test_tracker_connection(
     );
     let user = client.test_connection().await.map_err(|e| e.to_string())?;
 
-    Ok(user.display_name)
+    Ok(user)
 }
 
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub async fn push_to_tracker(
+pub async fn preview_jira_push(
     pool: State<'_, SqlitePool>,
-    crypto: State<'_, CryptoKey>,
     artifact_id: String,
-) -> Result<PushResult, String> {
-    jira_push_service::push_artifact(&pool, &crypto, &artifact_id)
+) -> Result<jira_push_service::PushPreview, String> {
+    jira_push_service::preview_artifact(&pool, &artifact_id)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-pub async fn bulk_push_to_tracker(
+pub async fn push_artifact_to_jira(
+    pool: State<'_, SqlitePool>,
+    crypto: State<'_, CryptoKey>,
+    artifact_id: String,
+) -> Result<CreatedIssueView, String> {
+    let res = jira_push_service::push_artifact(&pool, &crypto, &artifact_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let key = res.keys.join(", ");
+    let url = res.urls.first().cloned().unwrap_or_default();
+
+    Ok(CreatedIssueView { key, url })
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn bulk_push_artifacts_to_jira(
     pool: State<'_, SqlitePool>,
     crypto: State<'_, CryptoKey>,
     artifact_ids: Vec<String>,
@@ -149,12 +189,18 @@ pub async fn bulk_push_to_tracker(
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-pub async fn refresh_tracker_link_status(
+pub async fn refresh_external_link_status(
     pool: State<'_, SqlitePool>,
     crypto: State<'_, CryptoKey>,
     link_id: String,
-) -> Result<String, String> {
-    jira_push_service::refresh_link_status(&pool, &crypto, &link_id)
+) -> Result<ExternalLinkRow, String> {
+    // 1. Refresh status in DB
+    let _status = jira_push_service::refresh_link_status(&pool, &crypto, &link_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 2. Return full updated row
+    external_link_repo::fetch(&pool, &link_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -162,9 +208,21 @@ pub async fn refresh_tracker_link_status(
 #[tauri::command]
 pub async fn list_external_links(
     pool: State<'_, SqlitePool>,
-    artifact_id: String,
+    artifact_id: Option<String>,
 ) -> Result<Vec<ExternalLinkRow>, String> {
-    external_link_repo::list_for_artifact(&pool, &artifact_id)
-        .await
-        .map_err(|e| e.to_string())
+    if let Some(id) = artifact_id {
+        if id.is_empty() {
+            external_link_repo::list_all(&pool)
+                .await
+                .map_err(|e| e.to_string())
+        } else {
+            external_link_repo::list_for_artifact(&pool, &id)
+                .await
+                .map_err(|e| e.to_string())
+        }
+    } else {
+        external_link_repo::list_all(&pool)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }

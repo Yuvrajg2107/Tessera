@@ -150,6 +150,17 @@ pub async fn list_for_artifact(
     Ok(rows.into_iter().map(decode_row).collect())
 }
 
+pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<ExternalLinkRow>> {
+    let rows: Vec<RawRow> = sqlx::query_as(
+        "SELECT id, artifact_id, tracker, item_ref, issue_key, issue_url, issue_type, last_status, status_fetched_at, created_at, updated_at \
+         FROM external_links"
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(decode_row).collect())
+}
+
 pub async fn update_status(pool: &SqlitePool, id: &str, status: &str) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     sqlx::query(

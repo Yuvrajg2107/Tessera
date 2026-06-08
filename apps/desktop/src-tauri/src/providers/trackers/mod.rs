@@ -25,10 +25,11 @@ pub struct CreatedIssue {
     pub status: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TrackerUser {
     pub display_name: String,
-    pub email_address: Option<String>,
+    pub email: Option<String>,
 }
 
 #[async_trait::async_trait]

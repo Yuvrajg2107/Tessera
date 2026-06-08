@@ -135,7 +135,7 @@ impl IssueTracker for JiraTracker {
 
         Ok(TrackerUser {
             display_name: body.display_name,
-            email_address: body.email_address,
+            email: body.email_address,
         })
     }
 

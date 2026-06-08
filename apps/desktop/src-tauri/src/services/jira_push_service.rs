@@ -282,3 +282,64 @@ pub async fn post_run_comment(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushPreview {
+    pub summary: String,
+    pub description: String,
+    pub priority: Option<String>,
+    pub labels: Vec<String>,
+    pub project_key: String,
+    pub issue_type: String,
+    pub already_linked: bool,
+}
+
+/// Preview the push of an artifact to Jira.
+pub async fn preview_artifact(
+    pool: &SqlitePool,
+    artifact_id: &str,
+) -> AppResult<PushPreview> {
+    let tracker_config = tracker_config_repo::fetch_active(pool, DEFAULT_USER_ID, "jira").await?;
+    let artifact = crate::repositories::artifact_repo::fetch(pool, artifact_id).await?;
+    let links = external_link_repo::list_for_artifact(pool, artifact_id).await?;
+    let already_linked = !links.is_empty();
+
+    let mut summary = artifact.title.clone();
+    let mut description = artifact.content_md.clone();
+    let mut issue_type = tracker_config.issue_type.clone();
+    let priority = None;
+    let mut labels = vec![format!("tessera-{}", artifact.artifact_type.as_str())];
+
+    match artifact.artifact_type {
+        crate::repositories::artifact_repo::ArtifactType::TestPlan => {
+            issue_type = "Epic".to_string();
+            labels = vec!["tessera-test-plan".to_string()];
+        }
+        crate::repositories::artifact_repo::ArtifactType::TestCases => {
+            issue_type = tracker_config.issue_type.clone();
+            labels = vec!["tessera-test-case".to_string()];
+            if let Ok(structured) = serde_json::from_value::<TestCasesStructuredData>(artifact.structured_data.clone()) {
+                summary = format!("{} (Bulk: {} cases)", artifact.title, structured.cases.len());
+                let first_title = structured.cases.first().map(|c| c.title.as_str()).unwrap_or("No cases found");
+                description = format!(
+                    "Will push {} test cases to project {} under Epic context if available.\n\nFirst test case preview:\n{}",
+                    structured.cases.len(),
+                    tracker_config.project_key,
+                    first_title
+                );
+            }
+        }
+        _ => {}
+    }
+
+    Ok(PushPreview {
+        summary,
+        description,
+        priority,
+        labels,
+        project_key: tracker_config.project_key,
+        issue_type,
+        already_linked,
+    })
+}
+
